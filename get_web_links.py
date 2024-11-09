@@ -1,9 +1,12 @@
+import re
+from lib2to3.fixes.fix_input import context
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, InvalidSelectorException
 from datetime import datetime, timedelta
 
 # import pandas as pd
@@ -24,31 +27,40 @@ class SeleniumNewsScraper:
         self.setup_logging()
 
         # Configure news sources with their search patterns
+        def plus_format(elems: list[str]) -> str:
+            return "+".join(elems)
+
         self.sources = {
             "digi24": {
                 "url": "https://www.digi24.ro",
                 "search_url": "https://www.digi24.ro/cautare?q={query}",
+                "format_method": plus_format,
                 "article_pattern": "//article[contains(@class, 'article-alt')]",
                 "title_pattern": ".//h2[@class='h4 article-title']/a",
                 "date_pattern": ".//span[@class='article-date']",
                 "link_pattern": ".//h2[@class='h4 article-title']/a",
+                "exclude_pattern": "",
             },
-            #    "antena3": {
-            #        "url": "https://www.antena3.ro",
-            #        "search_url": "https://www.antena3.ro/cautare/{query}",
-            #        "article_pattern": "//div[contains(@class, 'article-item')]",
-            #        "title_pattern": ".//h3",
-            #        "date_pattern": ".//time",
-            #        "link_pattern": ".//a/@href",
-            #    },
-            #    "adevarul": {
-            #        "url": "https://adevarul.ro",
-            #        "search_url": "https://adevarul.ro/cauta?q={query}",
-            #        "article_pattern": "//div[contains(@class, 'article-box')]",
-            #        "title_pattern": ".//h3",
-            #        "date_pattern": ".//span[contains(@class, 'date')]",
-            #        "link_pattern": ".//a/@href",
-            #    },
+               "antena3": {
+                   "url": "https://www.antena3.ro",
+                   "search_url": "https://www.antena3.ro/cautare?q={query}",
+                   "format_method": plus_format,
+                   "article_pattern": ".//article",
+                   "title_pattern": ".//h3//a/@title",
+                   "date_pattern": ".//div[@class='date']",
+                   "link_pattern": ".//h3//a/@href",
+                   "exclude_pattern": "",
+               },
+               "adevarul": {
+                    "url": "https://adevarul.ro",
+                    "search_url": "https://adevarul.ro/search?q={query}&date_start=2023-01-01&date_end=2024-12-31",
+                   "format_method": plus_format,
+                    "article_pattern": "//div[contains(@class, 'container svelte-1h5vdfy')]",
+                    "title_pattern": ".//a[contains(@class, 'title titleAndHeadings')]",
+                    "date_pattern": ".//span[contains(@class, 'date metaFont')]",
+                    "link_pattern": ".//a[contains(@class, 'title titleAndHeadings')]/@href",
+                    "exclude_pattern": ".//div[contains(@class, 'advert')]"
+               },
             #    "pro_tv": {
             #        "url": "https://stirileprotv.ro",
             #        "search_url": "https://adevarul.ro/cautare/{query}",
@@ -71,11 +83,39 @@ class SeleniumNewsScraper:
             "AXPO": ["AXPO", "AXPO Energy Romania"],
             "CEZ": ["CEZ", "CEZ Vanzare"],
             "TERMOENERGETICA": ["TERMOENERGETICA", "Termoenergetica Bucuresti"],
-            "TRANSELECTRICA": [
-                "TRANSELECTRICA",
-                "Compania Nationala de Transport al Energiei Electrice",
-            ],
-            # Add other companies...
+            "TRANSELECTRICA": ["TRANSELECTRICA", "Compania Nationala de Transport al Energiei Electrice"],
+            "CONEF": ["CONEF", "CONEF GAZ"],
+            "DELGAZ": ["DELGAZ", "DELGAZ GRID"],
+            "DEER": ["DEER", "Distributie Energie Electrica Romania"],
+            "DEO": ["DEO", "Distributie Energie Oltenia"],
+            "DISTRIGAZ": ["DISTRIGAZ", "Distrigaz Sud Retele"],
+            "EON": ["EON", "E.ON Energie Romania"],
+            "EBANAT": ["EBANAT", "E-Distributie Banat"],
+            "EDOBROGEA": ["EDOBROGEA", "E-Distributie Dobrogea"],
+            "EMUNTENIA": ["EMUNTENIA", "E-Distributie Muntenia"],
+            "EFT": ["EFT", "EFT Furnizare"],
+            "ELECTRICA": ["ELECTRICA", "Electrica Furnizare"],
+            "ELECTRIFICARE": ["ELECTRIFICARE", "Electrificare CFR"],
+            "ELCEN": ["ELCEN", "Electrocentrale Bucuresti"],
+            "ENEL MUNTENIA": ["ENEL MUNTENIA", "ENEL Energie Muntenia"],
+            "ENEL": ["ENEL", "ENEL Energie"],
+            "ENEL GREEN": ["ENEL GREEN", "ENEL Green Power Romania"],
+            "EDS": ["EDS", "Energy Distribution Services"],
+            "ENGIE MANAGEMENT": ["ENGIE MANAGEMENT", "ENGIE Energy Management Romania"],
+            "ENGIE": ["ENGIE", "ENGIE Romania"],
+            "GETICA": ["GETICA", "Getica 95 COM"],
+            "IMEX": ["IMEX", "IMEX OIL Limited Nicosia Bucuresti"],
+            "MET": ["MET", "MET Romania Energy"],
+            "MONSSON": ["MONSSON", "Monsson Trading"],
+            "NEXT": ["NEXT", "Next Energy Partners"],
+            "NOVA": ["NOVA", "Nova Power & Gas"],
+            "PREMIER": ["PREMIER", "Premier Energy"],
+            "RENOVATIO": ["RENOVATIO", "Renovatio Trading"],
+            "CEO": ["CEO", "Complexul Energetic Oltenia"],
+            "HIDROELECTRICA": ["HIDROELECTRICA", "Societatea de Producere a Energiei Electrice in Hidrocentrale Hidroelectrica"],
+            "NUCLEARELECTRICA": ["NUCLEARELECTRICA", "Societatea Nationala Nuclearelectrica"],
+            "TINMAR": ["TINMAR", "Tinmar Energy"],
+            "VEOLIA": ["VEOLIA", "Veolia Energie Romania"]
         }
 
         self.initialize_browser_pool()
@@ -87,7 +127,12 @@ class SeleniumNewsScraper:
 
         self.logger.info("got to scrape_source")
         try:
-            search_url = config["search_url"].format(query=query)
+            query_elems = query.split(" ")
+            if len(query_elems) == 1:
+                search_url = config["search_url"].format(query=query_elems.pop())
+            elif len(query_elems) > 1:
+                formatted_query = config["format_method"](query_elems)
+                search_url = config["search_url"].format(query=formatted_query)
             print(search_url)
             if not self.safe_get(browser, search_url):
                 return articles
@@ -118,12 +163,16 @@ class SeleniumNewsScraper:
                     self.logger.info(f"got title")
                     date = self.extract_element_text(element, config["date_pattern"])
                     self.logger.info(f"got date")
-                    link = element.find_element(
-                        By.XPATH, config["link_pattern"]
-                    ).get_attribute("href")
+                    link = self.extract_element_text(element, config["link_pattern"])
                     self.logger.info(f"got link")
+                    exclude = None
+                    if (config["exclude_pattern"] != "" ):
+                        try:
+                            exclude = self.extract_element_text(element, config["exclude_pattern"])
+                        except NoSuchElementException:
+                            pass
 
-                    if title and link:
+                    if title and link and exclude is None:
                         articles.append(
                             {
                                 "title": title,
@@ -136,7 +185,6 @@ class SeleniumNewsScraper:
                     self.logger.error(
                         f"Error extracting article from {source_name}: {str(e)}"
                     )
-                    continue
 
         except Exception as e:
             self.logger.error(f"Error scraping {source_name}: {str(e)}")
@@ -198,10 +246,36 @@ class SeleniumNewsScraper:
     def extract_element_text(self, element, xpath: str) -> str:
         """Safely extract text from element using xpath"""
         try:
-            result = element.find_element(By.XPATH, xpath)
-            return result.text.strip()
+            # Check if xpath ends with an attribute selector (e.g., @href, @class)
+            attribute_match = re.search(r'/@([^/\[\]]+)$', xpath)
+
+            if attribute_match:
+                # If it ends with @attribute, remove the @attribute part for finding the element
+                attribute_name = attribute_match.group(1)
+                element_xpath = xpath[:xpath.rfind('/@' + attribute_name)]
+
+                # Find element and get its attribute
+                found_element = element.find_element(By.XPATH, element_xpath)
+                # If it ends with an HTML tag, get the text content
+                if len(found_element.text.strip()) > len(found_element.get_attribute(attribute_name)) and attribute_name != "href":
+                    return found_element.text.strip()
+                else:
+                    return found_element.get_attribute(attribute_name).strip()
+            else:
+                found_element = element.find_element(By.XPATH, xpath).text
+                return found_element
+
         except NoSuchElementException:
-            return ""
+            # Element not found
+            return None
+        except InvalidSelectorException:
+            # Invalid XPath syntax
+            print(f"Invalid XPath selector: {xpath}")
+            return None
+        except Exception as e:
+            # Handle any other exceptions
+            print(f"Error extracting from XPath {xpath}: {str(e)}")
+            return None
 
     def scroll_page(self, browser, scroll_pause_time=2):
         """Scroll the page to load dynamic content"""
@@ -281,6 +355,38 @@ class SeleniumNewsScraper:
 
         self.cleanup()
 
+    def test_website_config_futures(self,source_name: str,output_file: str = "selenium_news_results.json"):
+        if source_name not in self.sources:
+            exit(1)
+        all_results = []
+        with ThreadPoolExecutor(max_workers=self.num_browsers) as executor:
+           futures = []
+
+           for company in self.companies:
+               for query in self.companies[company]:
+                   futures.append(
+                       executor.submit(
+                           self.scrape_source, source_name,self.sources.get(source_name) , query
+                       )
+                   )
+
+           for future in futures:
+               try:
+                   articles = future.result()
+                   all_results.extend(articles)
+               except Exception as e:
+                   self.logger.error(f"Error processing future: {str(e)}")
+
+        # Deduplicate results
+        unique_results = {article["url"]: article for article in all_results}.values()
+        print("printing results: \n")
+        # Save results
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(list(unique_results), f, ensure_ascii=False, indent=2)
+
+        self.cleanup()
+
+
     def cleanup(self):
         """Clean up browser instances"""
         while not self.browser_pool.empty():
@@ -289,8 +395,7 @@ class SeleniumNewsScraper:
                 browser.quit()
             except:
                 pass
-
-
 if __name__ == "__main__":
-    scraper = SeleniumNewsScraper(headless=True, num_browsers=3)
-    scraper.main()
+    scraper = SeleniumNewsScraper(headless=False, num_browsers=5)
+    # scraper.main()
+    scraper.test_website_config_futures("adevarul")
