@@ -1,3 +1,4 @@
+import csv
 import re
 from lib2to3.fixes.fix_input import context
 
@@ -17,7 +18,7 @@ from typing import List, Dict
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-
+from newspaper import Article
 
 class SeleniumNewsScraper:
     def __init__(self, headless: bool = True, num_browsers: int = 3):
@@ -31,16 +32,16 @@ class SeleniumNewsScraper:
             return "+".join(elems)
 
         self.sources = {
-            "digi24": {
-                "url": "https://www.digi24.ro",
-                "search_url": "https://www.digi24.ro/cautare?q={query}",
-                "format_method": plus_format,
-                "article_pattern": "//article[contains(@class, 'article-alt')]",
-                "title_pattern": ".//h2[@class='h4 article-title']/a",
-                "date_pattern": ".//span[@class='article-date']",
-                "link_pattern": ".//h2[@class='h4 article-title']/a",
-                "exclude_pattern": "",
-            },
+            # "digi24": {
+            #     "url": "https://www.digi24.ro",
+            #     "search_url": "https://www.digi24.ro/cautare?q={query}",
+            #     "format_method": plus_format,
+            #     "article_pattern": "//article[contains(@class, 'article-alt')]",
+            #     "title_pattern": ".//h2[@class='h4 article-title']/a",
+            #     "date_pattern": ".//span[@class='article-date']",
+            #     "link_pattern": ".//h2[@class='h4 article-title']/a",
+            #     "exclude_pattern": "",
+            # },
                "antena3": {
                    "url": "https://www.antena3.ro",
                    "search_url": "https://www.antena3.ro/cautare?q={query}",
@@ -386,6 +387,57 @@ class SeleniumNewsScraper:
 
         self.cleanup()
 
+    def test_main_get_text(self, data : list[dict], executors: int = 5):
+        text_list = {}
+        start_time = datetime.now()
+        with ThreadPoolExecutor(max_workers=executors) as executor:
+            futures = []
+
+            for page_dict in data:
+
+                if datetime.now() < start_time + timedelta(seconds=60):
+                    futures.append(
+                        executor.submit(
+                            self.get_text, page_dict
+                        )
+                    )
+
+        with open("texts.csv", "w", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            try:
+                for future in futures:
+                    result = future.result()
+                    text_list[result["url"]] = result["content"]
+                    print(result["url"])
+                    print("writinf")
+                    writer.writerows(text_list.items())
+            except Exception as e:
+                print(e)
+                writer.writerows(text_list.items())
+                print(result)
+                return text_list
+            finally:
+                writer.writerows(text_list.items())
+
+        return text_list
+    def get_text(self, page_config: dict):
+        try:
+            print(page_config)
+            article = Article(page_config["url"])
+            article.download()
+            article.parse()
+            result = {
+                "title": [article.title, page_config["title"]],
+                "content": article.text,
+                "url": page_config["url"],
+                "date": [ article.publish_date,page_config["date"]],
+            }
+
+            return result
+        except Exception as e:
+            print(e)
+            return ""
+
 
     def cleanup(self):
         """Clean up browser instances"""
@@ -395,7 +447,13 @@ class SeleniumNewsScraper:
                 browser.quit()
             except:
                 pass
+
 if __name__ == "__main__":
-    scraper = SeleniumNewsScraper(headless=False, num_browsers=5)
-    # scraper.main()
-    scraper.test_website_config_futures("adevarul")
+    scraper = SeleniumNewsScraper(headless=True, num_browsers=6)
+    scraper.main()
+    # scraper.test_website_config_futures("adevarul")
+    print(datetime.now())
+
+    with open("selenium_news_results.json", "r", encoding="utf-8") as f:
+        content =json.load(f)
+    results = scraper.test_main_get_text(content)
